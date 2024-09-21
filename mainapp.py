@@ -97,7 +97,7 @@ def convert_number_words_to_digits(input_string):
     return converted_string
 
 # Filter the DataFrame to include only the rows with 'submitted' status
-df_submitted = df[df['status'] == 'submitted']
+df_submitted = df[df['status'] == 'submitted'].reset_index(drop=True)
 
 
 # Iterate through all submitted entries
@@ -154,14 +154,20 @@ def plot_data_for_pmid(paper):
         
         # Extract cells of origin and target cells
         cell_lines = ', '.join([
-            process_string(json.loads(protocol_info['cellLine'])['cellLineDetails'][i]['cellLineName'].strip().rstrip('.'))
-            for i in range(len(json.loads(protocol_info['cellLine'])['cellLineDetails']))
-        ])
+                process_string(json.loads(protocol_info['cellLine'])['cellLineDetails'][i]['cellLineName'].strip().rstrip('.'))
+                for i in range(len(json.loads(protocol_info['cellLine'])['cellLineDetails'])) if json.loads(protocol_info['cellLine'])['cellLineDetails'][i]['cellLineName']
+            ])
         
+        if cell_lines == '':
+            cell_lines = 'Not specified'
+
         target = ', '.join([
             process_string(json.loads(protocol_info['cellLine'])['differentiationTarget'][i]['targetCell'].strip().rstrip('.'))
             for i in range(len(json.loads(protocol_info['cellLine'])['differentiationTarget']))
         ])
+        
+        if target == '':
+            target = 'Not specified'
         
         # Display two boxes with an arrow in between them
         col1, col2, col3 = st.columns([5, 0.5, 5])  # Adjusted column widths for the arrow
