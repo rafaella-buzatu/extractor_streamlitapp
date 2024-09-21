@@ -144,7 +144,7 @@ def plot_data_for_pmid(paper):
         # Display Participant Information inside a box with step information
         st.markdown(f"""
             <div class="participant-container">
-                <p class="participant-title"><strong>Participant ID: {df_submitted[df_submitted['publication_id'] == paper].iloc[0]['participant_id']}</strong></p>
+                <p class="participant-title"><strong>Participant ID: {participant_id}</strong></p>
             </div>
         """, unsafe_allow_html=True)
         
