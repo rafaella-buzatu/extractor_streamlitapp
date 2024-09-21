@@ -109,6 +109,15 @@ def convert_number_words_to_digits(input_string):
 
     return converted_string
 
+def is_empty_or_null(item):
+    if isinstance(item, dict):
+        return all(is_empty_or_null(v) for v in item.values())
+    elif isinstance(item, list):
+        return all(is_empty_or_null(v) for v in item)
+    else:
+        return item in [None, "", False]
+
+
 # Filter the DataFrame to include only the rows with 'submitted' status
 df_submitted = df[df['status'] == 'submitted'].reset_index(drop=True)
 
@@ -117,7 +126,28 @@ df_submitted = df[df['status'] == 'submitted'].reset_index(drop=True)
 for index, row in df_submitted.iterrows():
    # Load the 'merged_data' field for each entry into a dictionary
     dictentry = json.loads(row['merged_data'])
+    ## REMOVE EMPTY KEYS
+    # Function to check if all values in a nested dictionary are empty or None
 
+    # List of keys to retain (will ignore these in the deletion)
+    keys_to_retain = ['0', '1001', '-1']
+
+    # List to store keys to remove
+    keys_to_remove = []
+
+    # Iterate over the dictionary
+    for key, value in dictentry.items():
+        if key not in keys_to_retain:
+            # Convert the inner JSON string into a dictionary
+            inner_dict = json.loads(value)
+            
+            # Check if all values in the inner dictionary are empty or null
+            if is_empty_or_null(inner_dict):
+                keys_to_remove.append(key)
+
+    # Remove the keys with empty inner dictionaries
+    for key in keys_to_remove:
+        del dictentry[key]
     # Calculate the new step count (subtract 3 as per your logic)
     newstepcount = len(dictentry) - 1 - 1 - 1
 
@@ -346,7 +376,7 @@ def plot_data_for_pmid(paper):
                     iterate_supplements = range(len(json.loads(protocol_info[no_steps[i]])["SerumAndSupplements"]))
                 for j in iterate_supplements:
                     if json.loads(protocol_info[no_steps[i]])["SerumAndSupplements"][j]["name"] not in ['-', 'NA']:
-                        supplements += json.loads(protocol_info[no_steps[i]])["SerumAndSupplements"][j]["name"]
+                        supplements += json.loads(protocol_info[no_steps[i]])["SerumAndSupplements"][j]["name"] 
                         if j != iterate_supplements[-1]:
                             supplements += ', '
                 
@@ -370,7 +400,26 @@ def plot_data_for_pmid(paper):
                 if gf == '':
                     gf = 'Not specified'
         
-                step_content += f"<p><strong>Growth factors:</strong></p><p>{gf}</p></div>"
+                step_content += f"<p><strong>Growth factors:</strong></p><p>{gf}</p><hr>"
+
+
+                 # Growth factors
+                matrix = ''
+                if ("cultureMatrix") in json.loads(protocol_info[no_steps[i]]).keys():
+                    try:
+                        iterate_mat = list(json.loads(protocol_info[no_steps[i]])["cultureMatrix"].keys())
+                    except AttributeError:
+                        iterate_mat = range(len(json.loads(protocol_info[no_steps[i]])["cultureMatrix"]))
+                    for j in iterate_mat:
+                        if json.loads(protocol_info[no_steps[i]])["cultureMatrix"][j]["name"] not in ['-', 'NA']:
+                            matrix += json.loads(protocol_info[no_steps[i]])["cultureMatrix"][j]["name"]
+                            if j != iterate_mat[-1]:
+                                matrix += ', '
+        
+                if matrix == '':
+                    matrix = 'Not specified'
+        
+                step_content += f"<p><strong>Culture matrix:</strong></p><p>{matrix}</p></div>"
         
                 # Render the HTML content inside the container
                 st.markdown(step_content, unsafe_allow_html=True)
