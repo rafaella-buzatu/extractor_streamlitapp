@@ -1,7 +1,6 @@
 import streamlit as st
 st.set_page_config(layout="wide")
 import pandas as pd
-import matplotlib.pyplot as plt
 import json
 import numpy as np
 import re
