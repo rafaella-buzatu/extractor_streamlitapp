@@ -67,6 +67,19 @@ st.markdown(
     """, unsafe_allow_html=True
 )
 
+def extract_number_in_parentheses(input_string):
+    # Use regular expression to find the number inside parentheses
+    match = re.search(r'\((\d+)h\)', input_string)
+    
+    if match:
+        # Return the number found inside parentheses
+        return match.group(1)
+    else:
+        # Return None or some other default value if no match is found
+        return None
+    
+def process_string(s):
+    return re.sub(r'\s+', ' ', s) 
 
 def convert_number_words_to_digits(input_string):
     # Dictionary to map number words to their corresponding integer values
@@ -102,25 +115,33 @@ df_submitted = df[df['status'] == 'submitted'].reset_index(drop=True)
 
 # Iterate through all submitted entries
 for index, row in df_submitted.iterrows():
-    try:
-        # Load the 'merged_data' field for each entry into a dictionary
-        dictentry = json.loads(row['merged_data'])
+   # Load the 'merged_data' field for each entry into a dictionary
+    dictentry = json.loads(row['merged_data'])
 
-        # Calculate the new step count (subtract 3 as per your logic)
-        newstepcount = len(dictentry) - 1 - 1 - 1
+    # Calculate the new step count (subtract 3 as per your logic)
+    newstepcount = len(dictentry) - 1 - 1 - 1
 
-        # Rename dictionary keys as required
-        dictentry[str(newstepcount)] = dictentry.pop('1000')  # Rename '1000' to new step number
-        dictentry['sequencingData'] = dictentry.pop('1001')   # Rename '1001' to 'sequencingData'
-        dictentry['cellLine'] = dictentry.pop('-1')           # Rename '-1' to 'cellLine'
+     # Check and rename '1000' to the new step count
+    if '1000' in dictentry:
+        dictentry[str(newstepcount)] = dictentry.pop('1000')
+    else:
+        print ('error changing key 1000')
+    
+    # Check and rename '1001' to 'sequencingData'
+    if '1001' in dictentry:
+        dictentry['sequencingData'] = dictentry.pop('1001')
+    else:
+        print ('error changing key 1000')
 
-        # Save the updated dictionary back into the DataFrame
-        df_submitted.at[index, 'merged_data'] = dictentry
-
-    except (KeyError, json.JSONDecodeError) as e:
-        # Handle any errors related to missing keys or JSON issues
-        print(f"Error processing entry at index {index}: {e}")
-        continue
+    # Check and rename '-1' to 'cellLine'
+    if '-1' in dictentry:
+        dictentry['cellLine'] = dictentry.pop('-1')
+    else:
+        print ('error changing key 1000')
+        
+    # Save the updated dictionary back into the DataFrame
+    df_submitted.at[index, 'merged_data'] = dictentry
+    
 
 st.title('Differentiation protocols')
 
@@ -148,10 +169,6 @@ def plot_data_for_pmid(paper):
             </div>
         """, unsafe_allow_html=True)
         
-        ### cell lines and target cells
-        def process_string(s):
-            return re.sub(r'\s+', ' ', s)
-        
         # Extract cells of origin and target cells
         cell_lines = ', '.join([
                 process_string(json.loads(protocol_info['cellLine'])['cellLineDetails'][i]['cellLineName'].strip().rstrip('.'))
@@ -163,7 +180,7 @@ def plot_data_for_pmid(paper):
 
         target = ', '.join([
             process_string(json.loads(protocol_info['cellLine'])['differentiationTarget'][i]['targetCell'].strip().rstrip('.'))
-            for i in range(len(json.loads(protocol_info['cellLine'])['differentiationTarget']))
+            for i in range(len(json.loads(protocol_info['cellLine'])['differentiationTarget'])) if json.loads(protocol_info['cellLine'])['differentiationTarget'][i]['targetCell']
         ])
         
         if target == '':
@@ -237,7 +254,10 @@ def plot_data_for_pmid(paper):
             
             else:
                 step_times = re.findall(r'\d+', duration_str)
-                if len(step_times) == 1:
+                if len(step_times) >2:
+                    if ('(' in duration_str):
+                        length_step = float(extract_number_in_parentheses(duration_str))
+                elif len(step_times) == 1:
                     length_step = float(step_times[0])
                 else:
                     length_step = np.mean([float(time) for time in step_times])
