@@ -118,6 +118,39 @@ def is_empty_or_null(item):
         return item in [None, "", False]
 
 
+def convert_to_duration_fixed(string):
+    # Find all occurrences of number1-number2
+    pattern = re.compile(r'(\d+)-(\d+)')
+    
+    # Function to compute the difference and format it correctly
+    def replace_with_duration(match):
+        num1 = int(match.group(1))
+        num2 = int(match.group(2))
+        difference = num2 - num1 + 1
+        # Determine the correct unit based on presence of 'day' or 'week' in the original string
+        if 'day' in string.lower():
+            unit = 'day'
+        elif 'week' in string.lower():
+            unit = 'week'
+        elif 'hour' in string.lower():
+            unit = 'hour'
+        else:
+            unit = 'time period'
+        # Return formatted duration with singular/plural adjustment
+        return f"{difference} {unit}{'s' if difference > 1 else ''}"
+    
+    # Replace the range with the calculated duration
+    result = pattern.sub(replace_with_duration, string)
+    # Remove redundant pluralized word (e.g., day 2 days) by cleaning up the initial part
+    if 'day' in result:
+        result = re.sub(r'day(s?) \d+ days?', result.split()[-2] + ' days' if 'days' in result else result.split()[-2] + ' day', result)
+    elif 'week' in result:
+        result = re.sub(r'week(s?) \d+ weeks?', result.split()[-2] + ' weeks' if 'weeks' in result else result.split()[-2] + ' week', result)
+
+    return result
+
+
+
 # Filter the DataFrame to include only the rows with 'submitted' status
 df_submitted = df[df['status'] == 'submitted'].reset_index(drop=True)
 
@@ -291,8 +324,12 @@ def plot_data_for_pmid(selected_pmid, selected_participants):
         # Extract durationHours for each step
         for i in no_steps:
             duration_str = json.loads(protocol_info[str(i)])['duration'][0]['durationHours']
-        
+            
+            #Convert written numbers (up to 12) to digits
             duration_str = convert_number_words_to_digits(duration_str)
+            #
+            if '-' in duration_str:
+                duration_str = convert_to_duration_fixed(duration_str.lower())
         
             # Check if the duration is in weeks, days, or hours
             if 'week' in duration_str.lower():
@@ -318,7 +355,11 @@ def plot_data_for_pmid(selected_pmid, selected_participants):
                 step_times = re.findall(r'\d+', duration_str)
                 if len(step_times) >2:
                     if ('(' in duration_str):
-                        length_step = float(extract_number_in_parentheses(duration_str))
+                        try:
+                            length_step = float(extract_number_in_parentheses(duration_str))
+                        except TypeError:
+                            length_step = np.nan
+                            
                 elif len(step_times) == 1:
                     length_step = float(step_times[0])
                 else:
