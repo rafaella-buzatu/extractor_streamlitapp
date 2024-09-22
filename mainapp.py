@@ -121,7 +121,8 @@ def is_empty_or_null(item):
 # Filter the DataFrame to include only the rows with 'submitted' status
 df_submitted = df[df['status'] == 'submitted'].reset_index(drop=True)
 
-#%% PRE-PROCESS KEYS
+#Filter out Thomas's submissions
+df_submitted = df_submitted[df_submitted['participant_id'] != 1246060743644676199]
 
 # Iterate through all submitted entries
 for index, row in df_submitted.iterrows():
@@ -467,12 +468,18 @@ def plot_data_for_pmid(selected_pmid, selected_participants):
                         for j in iterate_mark:
                             if json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["name"] not in ['-', 'NA', 'Not given', None]:
                                 markers += json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["name"]
-                                if json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["geneEnrichment"] == 'upregulated':
-                                    markers += ' ↑'
-                                elif json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["geneEnrichment"] == 'downregulated':
-                                    markers += ' ↓'
-                                elif json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["geneEnrichment"] is None:
+                                
+                                if ("geneEnrichment" in json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]):
+            
+                                    if json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["geneEnrichment"] == 'upregulated':
+                                        markers += ' ↑'
+                                    elif json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["geneEnrichment"] == 'downregulated':
+                                        markers += ' ↓'
+                                    elif json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["geneEnrichment"] is None:
+                                        markers += ' (direction not specified)'
+                                elif  json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["name"]:
                                     markers += ' (direction not specified)'
+                                    
                                 if j != iterate_mark[-1]:
                                     markers += ', '
                                 
