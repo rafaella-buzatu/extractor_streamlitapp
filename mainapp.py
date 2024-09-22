@@ -27,7 +27,13 @@ st.markdown(
         background-color:  #DFE5FF; /* Light blue background */
         margin-bottom: 20px;
         color: black; /* Text color for white box */
-        border: 1px solid #E0E0E0; /* Optional border for the white box */
+    }
+    .readout-container {
+        padding: 10px;
+        border-radius: 10px;
+        background-color: #EAFFE4; /* Light green background */
+        margin-bottom: 20px;
+        color: black; /* Text color for white box */
     }
     .participant-container {
         padding: 5px; /* Slightly increase padding for better appearance */
@@ -394,10 +400,10 @@ def plot_data_for_pmid(selected_pmid, selected_participants):
                 max_index = proportions.index(max(proportions))
                 
                 # Add 0.1 to the current element
-                proportions[i] += 0.1
+                proportions[i] += 0.05
                 
                 # Subtract 0.1 from the maximum element
-                proportions[max_index] -= 0.1
+                proportions[max_index] -= 0.05
         
                 # Ensure that the maximum element doesn't drop below 0.1 after adjustment
                 if proportions[max_index] < 0.1:
@@ -498,7 +504,8 @@ def plot_data_for_pmid(selected_pmid, selected_participants):
                         matrix = 'Not specified'
             
                     step_content += f"<p><strong>Culture matrix:</strong></p><p>{matrix}</p><hr>"
-
+                    
+                step_content+= "</div>"
 
                 #Markers
                 if (markerscheckbox):
@@ -529,7 +536,7 @@ def plot_data_for_pmid(selected_pmid, selected_participants):
                         if markers == '':
                             markers = 'Not specified'
                         
-                        step_content += f"<p><strong>Readout:</strong></p><p>{markers}</p></div>"
+                        step_content += f"""<div class="readout-container"<p><strong>Readout:</strong></p><p>{markers}</p></div>"""
 
 
                 # Render the HTML content inside the container
