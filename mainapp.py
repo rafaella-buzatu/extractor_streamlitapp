@@ -135,7 +135,7 @@ def convert_to_duration_fixed(string):
         elif 'hour' in string.lower():
             unit = 'hour'
         else:
-            unit = 'time period'
+            unit = ''
         # Return formatted duration with singular/plural adjustment
         return f"{difference} {unit}{'s' if difference > 1 else ''}"
     
@@ -245,7 +245,8 @@ st.markdown(f"""<hr class="custom-divider">""", unsafe_allow_html=True)
 def plot_data_for_pmid(selected_pmid, selected_participants):
     
     if selected_participants == 'show all' and selected_pmid == 'show all':
-        paper_submissions = df_submitted
+        paper_submissions = df_submitted[:10]
+        st.markdown(f"""<p> Showing first 10 entries </p>""", unsafe_allow_html=True)
     elif selected_participants == 'show all':
         paper_submissions = df_submitted[df_submitted['publication_id'] == selected_pmid]
     elif selected_pmid == 'show all':
@@ -261,7 +262,7 @@ def plot_data_for_pmid(selected_pmid, selected_participants):
         participant_id = entry['participant_id']
         
         # Display Participant Information inside a box with step information
-        
+    
         
         st.subheader(f"PMID: {pmid} | Participant ID: {participant_id}")
         
@@ -329,7 +330,8 @@ def plot_data_for_pmid(selected_pmid, selected_participants):
             duration_str = convert_number_words_to_digits(duration_str)
             #
             if '-' in duration_str:
-                duration_str = convert_to_duration_fixed(duration_str.lower())
+                if  duration_str[0].isalpha():
+                    duration_str = convert_to_duration_fixed(duration_str.lower())
         
             # Check if the duration is in weeks, days, or hours
             if 'week' in duration_str.lower():
@@ -352,7 +354,7 @@ def plot_data_for_pmid(selected_pmid, selected_participants):
                 length_step = np.nan
             
             else:
-                step_times = re.findall(r'\d+', duration_str)
+                step_times = [float(nr) for nr in re.findall(r'\d+\.\d+|\d+', duration_str)]
                 if len(step_times) >2:
                     if ('(' in duration_str):
                         try:
