@@ -160,13 +160,112 @@ def convert_to_duration_fixed(string):
 # Filter the DataFrame to include only the rows with 'submitted' status
 df_submitted = df[df['status'] == 'submitted'].reset_index(drop=True)
 
-#Filter out Thomas's submissions
+#Filter out test submissions
 df_submitted = df_submitted[df_submitted['participant_id'] != 1246060743644676199]
+df_submitted = df_submitted[df_submitted['participant_id'] != 753972611481993256]
+df_submitted = df_submitted[df_submitted['participant_id'] != 204295234522185728]
+
+# --- Apply participant/publication blacklists (Excel) ---
+# Sheet1: participant_id + submissionsToRemove (PMIDs or 'all') -> removes specific participant/PMID pairs or whole participant
+# Sheet2: list of PMIDs to remove completely
+def _safe_str(x):
+    if pd.isna(x):
+        return None
+    try:
+        # handles ints stored as floats in Excel
+        if isinstance(x, (int, np.integer)):
+            return str(int(x))
+        if isinstance(x, float) and x.is_integer():
+            return str(int(x))
+    except Exception:
+        pass
+    return str(x).strip()
+
+def load_blacklists(excel_path: str):
+    remove_all_participants = set()
+    remove_pairs = set()  # (participant_id_str, pmid_str)
+    remove_pmids_full = set()
+
+    if excel_path is None or not os.path.exists(excel_path):
+        return remove_all_participants, remove_pairs, remove_pmids_full
+
+    # Sheet1
+    try:
+        sheet1 = pd.read_excel(excel_path, sheet_name="Sheet1")
+        if "participant_id" in sheet1.columns and "submissionsToRemove" in sheet1.columns:
+            for _, r in sheet1[["participant_id", "submissionsToRemove"]].iterrows():
+                pid = _safe_str(r["participant_id"])
+                subs = _safe_str(r["submissionsToRemove"])
+                if not pid or not subs:
+                    continue
+                if subs.lower() == "all":
+                    remove_all_participants.add(pid)
+                else:
+                    # allow comma/semicolon/space separated PMIDs, keep only digit runs
+                    pmids = re.findall(r"\d+", subs)
+                    for p in pmids:
+                        remove_pairs.add((pid, p))
+    except Exception:
+        # If the blacklist format changes, fail open (show data) rather than crash the app
+        pass
+
+    # Sheet2 (PMIDs to remove completely). Read without headers to include first cell.
+    try:
+        sheet2 = pd.read_excel(excel_path, sheet_name="Sheet2", header=None)
+        for v in sheet2.iloc[:, 0].dropna().tolist():
+            pmid = _safe_str(v)
+            if pmid and re.fullmatch(r"\d+", pmid):
+                remove_pmids_full.add(pmid)
+    except Exception:
+        pass
+
+    return remove_all_participants, remove_pairs, remove_pmids_full
+
+import os
+BLACKLIST_XLSX_CANDIDATES = [
+    "participant_blacklist.xlsx",
+    os.path.join("data", "participant_blacklist.xlsx"),
+]
+_blacklist_path = next((p for p in BLACKLIST_XLSX_CANDIDATES if os.path.exists(p)), None)
+
+# Normalize IDs as strings for consistent matching
+df_submitted["participant_id"] = df_submitted["participant_id"].apply(_safe_str)
+df_submitted["publication_id"] = df_submitted["publication_id"].apply(_safe_str)
+
+remove_all_participants, remove_pairs, remove_pmids_full = load_blacklists(_blacklist_path)
+
+# 2) Remove papers completely based on PMID in Sheet2
+if remove_pmids_full:
+    df_submitted = df_submitted[~df_submitted["publication_id"].isin(remove_pmids_full)]
+
+# 1) Remove participant/PMID-specific entries (and optionally whole participants)
+if remove_all_participants:
+    df_submitted = df_submitted[~df_submitted["participant_id"].isin(remove_all_participants)]
+
+if remove_pairs:
+    remove_keys = set([f"{pid}||{pmid}" for pid, pmid in remove_pairs])
+    keys = df_submitted["participant_id"].astype(str) + "||" + df_submitted["publication_id"].astype(str)
+    df_submitted = df_submitted[~keys.isin(remove_keys)]
+
+df_submitted = df_submitted.reset_index(drop=True)
+# --- end blacklists ---
 
 # Iterate through all submitted entries
 for index, row in df_submitted.iterrows():
-   # Load the 'merged_data' field for each entry into a dictionary
-    dictentry = json.loads(row['merged_data'])
+    # Load the 'merged_data' field for each entry into a dictionary
+    merged_raw = row.get('merged_data', None)
+    try:
+        # merged_data can be missing/NaN (often read as float) — skip safely
+        if merged_raw is None or (isinstance(merged_raw, float) and pd.isna(merged_raw)) or (isinstance(merged_raw, str) and merged_raw.strip() == ''):
+            continue
+        if isinstance(merged_raw, (bytes, bytearray)):
+            merged_raw = merged_raw.decode('utf-8', errors='replace')
+        dictentry = json.loads(merged_raw) if isinstance(merged_raw, str) else merged_raw
+        if not isinstance(dictentry, dict):
+            continue
+    except Exception:
+        # Bad JSON/unexpected type — skip this record rather than crashing the whole app
+        continue
     ## REMOVE EMPTY KEYS
     # Function to check if all values in a nested dictionary are empty or None
 
@@ -266,283 +365,287 @@ def plot_data_for_pmid(selected_pmid, selected_participants):
         protocol_info = entry["merged_data"]
         pmid = entry['publication_id']
         participant_id = entry['participant_id']
-        
-        # Display Participant Information inside a box with step information
+        try:
+            
+            # Display Participant Information inside a box with step information
     
-        
-        st.subheader(f"PMID: {pmid} | Participant ID: {participant_id}")
-        
-        if (cellcheckbox):
-            # Extract cells of origin and target cells
-            cell_lines = ', '.join([
-                    process_string(json.loads(protocol_info['cellLine'])['cellLineDetails'][i]['cellLineName'].strip().rstrip('.'))
-                    for i in range(len(json.loads(protocol_info['cellLine'])['cellLineDetails'])) if json.loads(protocol_info['cellLine'])['cellLineDetails'][i]['cellLineName']
+            
+            st.subheader(f"PMID: {pmid} | Participant ID: {participant_id}")
+            
+            if (cellcheckbox):
+                # Extract cells of origin and target cells
+                cell_lines = ', '.join([
+                        process_string(json.loads(protocol_info['cellLine'])['cellLineDetails'][i]['cellLineName'].strip().rstrip('.'))
+                        for i in range(len(json.loads(protocol_info['cellLine'])['cellLineDetails'])) if json.loads(protocol_info['cellLine'])['cellLineDetails'][i]['cellLineName']
+                    ])
+                
+                if cell_lines == '':
+                    cell_lines = 'Not specified'
+
+                target = ', '.join([
+                    process_string(json.loads(protocol_info['cellLine'])['differentiationTarget'][i]['targetCell'].strip().rstrip('.'))
+                    for i in range(len(json.loads(protocol_info['cellLine'])['differentiationTarget'])) if json.loads(protocol_info['cellLine'])['differentiationTarget'][i]['targetCell']
                 ])
-            
-            if cell_lines == '':
-                cell_lines = 'Not specified'
-
-            target = ', '.join([
-                process_string(json.loads(protocol_info['cellLine'])['differentiationTarget'][i]['targetCell'].strip().rstrip('.'))
-                for i in range(len(json.loads(protocol_info['cellLine'])['differentiationTarget'])) if json.loads(protocol_info['cellLine'])['differentiationTarget'][i]['targetCell']
-            ])
-            
-            if target == '':
-                target = 'Not specified'
-            
-            # Display two boxes with an arrow in between them
-            col1, col2, col3 = st.columns([5, 0.5, 5])  # Adjusted column widths for the arrow
-            
-            with col1:
-                st.markdown(f"""
-                    <div class="cell-box">
-                        <strong>Cells of Origin:</strong><br>
-                        {cell_lines}
-                    </div>
-                """, unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown(f"""
-                    <div class="arrow-box">
-                    <span style='font-size:70px;'>&#8594;</span>
-                    </div>
-                """, unsafe_allow_html=True)
-            
-            with col3:
-                st.markdown(f"""
-                    <div class="cell-box">
-                        <strong>Target Cells:</strong><br>
-                        {target}
-                    </div>
-                """, unsafe_allow_html=True)
-        
-        
-        no_steps = list(protocol_info.keys())
-        no_steps.remove('sequencingData')
-        no_steps.remove('cellLine')
-        culturing =json.loads( protocol_info['0'])["culturingProtocol"][0]["isGiven"]
-        if (culturing == False):
-            no_steps.remove('0')
-        
-        # Initialize lists for lengths and labels
-        lengths = []
-        labels_time = []
-        
-        # Extract durationHours for each step
-        for i in no_steps:
-            duration_str = json.loads(protocol_info[str(i)])['duration'][0]['durationHours']
-            
-            #Convert written numbers (up to 12) to digits
-            duration_str = convert_number_words_to_digits(duration_str)
-            #
-            if '-' in duration_str:
-                if  duration_str[0].isalpha():
-                    duration_str = convert_to_duration_fixed(duration_str.lower())
-        
-            # Check if the duration is in weeks, days, or hours
-            if 'week' in duration_str.lower():
-                step_times = re.findall(r'\d+', duration_str)
-                if len(step_times) == 1:
-                    length_step = float(step_times[0]) * 7 * 24
-                else:
-                    length_step = np.mean([float(time) * 7 * 24 for time in step_times])
-                label = f"{int(length_step)} hours"
                 
-            elif 'day' in duration_str.lower():
-                step_times = re.findall(r'\d+', duration_str)
-                if len(step_times) == 1:
-                    length_step = float(step_times[0]) * 24
-                else:
-                    length_step = np.mean([float(time) * 24 for time in step_times])
-                label = f"{int(length_step)} hours"
-            
-            elif len(re.findall(r'\d+', duration_str)) == 0 or duration_str == '0':
-                length_step = np.nan
-            
-            else:
-                step_times = [float(nr) for nr in re.findall(r'\d+\.\d+|\d+', duration_str)]
-                if len(step_times) >2:
-                    if ('(' in duration_str):
-                        try:
-                            length_step = float(extract_number_in_parentheses(duration_str))
-                        except TypeError:
-                            length_step = np.nan
-                            
-                elif len(step_times) == 1:
-                    length_step = float(step_times[0])
-                else:
-                    length_step = np.mean([float(time) for time in step_times])
-                label = duration_str
-        
-            if np.isnan(length_step):
-                length_step = 35  # Default length if unspecified
-                label = 'Not specified'
-                    
-            elif 'hours' not in label.lower():
-                label = label + '\nhours'
-            else:
-                label = label.replace(' hours', '\nhours')
-        
-            if length_step <35:
-                length_step = 35
-        
-            labels_time.append(label)
-            lengths.append(length_step)
-        
-        # Normalize lengths to calculate proportions for column widths
-        total_length = sum(lengths)
-        proportions = [length / total_length for length in lengths]
-        
-        # Adjust proportions if any value is less than 0.1
-        for i, prop in enumerate(proportions):
-            if prop < 0.1:
-                # Find the index of the maximum element in proportions
-                max_index = proportions.index(max(proportions))
+                if target == '':
+                    target = 'Not specified'
                 
-                # Add 0.1 to the current element
-                proportions[i] += 0.05
+                # Display two boxes with an arrow in between them
+                col1, col2, col3 = st.columns([5, 0.5, 5])  # Adjusted column widths for the arrow
                 
-                # Subtract 0.1 from the maximum element
-                proportions[max_index] -= 0.05
-        
-                # Ensure that the maximum element doesn't drop below 0.1 after adjustment
-                if proportions[max_index] < 0.1:
-                    proportions[max_index] = 0.1
-        
-        # Display the steps with proportional widths
-        columns = st.columns(proportions)
-        
-        # Render each step inside the appropriate column
-        for i in range(len(no_steps)):
-            if no_steps[i] == '0':
-                container_class = "step-container-culturing"
-                label = 'Culturing'
-            else:
-                container_class = "step-container"
-                label = f"Step {no_steps[i]}"
-        
-            with columns[i]:
-                # Display the step label above the container with small font size
-                st.markdown(f"<p class='small-text' style='text-align: center; font-weight: bold;'>{label}</p>", unsafe_allow_html=True)
-        
-                # Display the duration (labels_time) underneath the step label
-                st.markdown(f"<p class='small-text' style='text-align: center;'>{labels_time[i]}</p>", unsafe_allow_html=True)
-        
-                # Build HTML content for the step container
-                step_content = f"""
-                <div class="{container_class}">
-                """
-                # Basal media
-                if (mediacheckbox):
-                    media = ''
-                    try:
-                        iterate = list(json.loads(protocol_info[no_steps[i]])["basalMedia"].keys())
-                    except AttributeError:
-                        iterate =  range(len(json.loads(protocol_info[no_steps[i]])["basalMedia"]))
-                    for j in iterate:
-                        if json.loads(protocol_info[no_steps[i]])["basalMedia"][j]["name"]:
-                            if json.loads(protocol_info[no_steps[i]])["basalMedia"][j]["name"] not in ['-', 'NA']:
-                                media += json.loads(protocol_info[no_steps[i]])["basalMedia"][j]["name"]
-                                if j != iterate[-1]:
-                                    media += ', '
-                    if media == '':
-                        media = 'Not specified'
-                    step_content += f"""<p><strong>Basal media:</strong></p><p>{media}</p><hr>"""
-        
-               # Supplements
-                if (supplementscheckbox):
-                    supplements = ''
-                    try:
-                        iterate_supplements = list(json.loads(protocol_info[no_steps[i]])["SerumAndSupplements"].keys())
-                    except AttributeError:
-                        iterate_supplements = range(len(json.loads(protocol_info[no_steps[i]])["SerumAndSupplements"]))
-                    for j in iterate_supplements:
-                        if json.loads(protocol_info[no_steps[i]])["SerumAndSupplements"][j]["name"] not in ['-', 'NA']:
-                            supplements += json.loads(protocol_info[no_steps[i]])["SerumAndSupplements"][j]["name"] 
-                            if j != iterate_supplements[-1]:
-                                supplements += ', '
+                with col1:
+                    st.markdown(f"""
+                        <div class="cell-box">
+                            <strong>Cells of Origin:</strong><br>
+                            {cell_lines}
+                        </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    st.markdown(f"""
+                        <div class="arrow-box">
+                        <span style='font-size:70px;'>&#8594;</span>
+                        </div>
+                    """, unsafe_allow_html=True)
+                
+                with col3:
+                    st.markdown(f"""
+                        <div class="cell-box">
+                            <strong>Target Cells:</strong><br>
+                            {target}
+                        </div>
+                    """, unsafe_allow_html=True)
+            
+            
+            no_steps = list(protocol_info.keys())
+            no_steps.remove('sequencingData')
+            no_steps.remove('cellLine')
+            culturing =json.loads( protocol_info['0'])["culturingProtocol"][0]["isGiven"]
+            if (culturing == False):
+                no_steps.remove('0')
+            
+            # Initialize lists for lengths and labels
+            lengths = []
+            labels_time = []
+            
+            # Extract durationHours for each step
+            for i in no_steps:
+                duration_str = json.loads(protocol_info[str(i)])['duration'][0]['durationHours']
+                
+                #Convert written numbers (up to 12) to digits
+                duration_str = convert_number_words_to_digits(duration_str)
+                #
+                if '-' in duration_str:
+                    if  duration_str[0].isalpha():
+                        duration_str = convert_to_duration_fixed(duration_str.lower())
+            
+                # Check if the duration is in weeks, days, or hours
+                if 'week' in duration_str.lower():
+                    step_times = re.findall(r'\d+', duration_str)
+                    if len(step_times) == 1:
+                        length_step = float(step_times[0]) * 7 * 24
+                    else:
+                        length_step = np.mean([float(time) * 7 * 24 for time in step_times])
+                    label = f"{int(length_step)} hours"
                     
-                    if supplements == '':
-                        supplements = 'Not specified'
-            
-                    step_content += f"<p><strong>Serum and supplements:</strong></p><p>{supplements}</p><hr>"
-        
-                # Growth factors
-                if (gfcheckbox):
-                    gf = ''
-                    try:
-                        iterate_gf = list(json.loads(protocol_info[no_steps[i]])["growthFactor"].keys())
-                    except AttributeError:
-                        iterate_gf = range(len(json.loads(protocol_info[no_steps[i]])["growthFactor"]))
-                    for j in iterate_gf:
-                        if json.loads(protocol_info[no_steps[i]])["growthFactor"][j]["name"] not in ['-', 'NA']:
-                            gf += json.loads(protocol_info[no_steps[i]])["growthFactor"][j]["name"]
-                            if j != iterate_gf[-1]:
-                                gf += ', '
-            
-                    if gf == '':
-                        gf = 'Not specified'
-            
-                    step_content += f"<p><strong>Growth factors:</strong></p><p>{gf}</p><hr>"
-
-
-                #Culture matrix
-                if (matrixcheckbox):
-                    matrix = ''
-                    if ("cultureMatrix") in json.loads(protocol_info[no_steps[i]]).keys():
-                        try:
-                            iterate_mat = list(json.loads(protocol_info[no_steps[i]])["cultureMatrix"].keys())
-                        except AttributeError:
-                            iterate_mat = range(len(json.loads(protocol_info[no_steps[i]])["cultureMatrix"]))
-                        for j in iterate_mat:
-                            if json.loads(protocol_info[no_steps[i]])["cultureMatrix"][j]["name"] not in ['-', 'NA', 'Not given']:
-                                matrix += json.loads(protocol_info[no_steps[i]])["cultureMatrix"][j]["name"]
-                                if j != iterate_mat[-1]:
-                                    matrix += ', '
-            
-                    if matrix == '':
-                        matrix = 'Not specified'
-            
-                    step_content += f"<p><strong>Culture matrix:</strong></p><p>{matrix}</p><hr>"
-                    
-                step_content+= "</div>"
-
-                #Markers
-                if (markerscheckbox):
-                    markers = ''
-                    if no_steps[i] != '0':
-                        try:
-                            iterate_mark = list(json.loads(protocol_info[no_steps[i]])["geneMarkers"].keys())
-                        except AttributeError:
-                            iterate_mark = range(len(json.loads(protocol_info[no_steps[i]])["geneMarkers"]))
-                        for j in iterate_mark:
-                            if json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["name"] not in ['-', 'NA', 'Not given', None]:
-                                markers += json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["name"]
+                elif 'day' in duration_str.lower():
+                    step_times = re.findall(r'\d+', duration_str)
+                    if len(step_times) == 1:
+                        length_step = float(step_times[0]) * 24
+                    else:
+                        length_step = np.mean([float(time) * 24 for time in step_times])
+                    label = f"{int(length_step)} hours"
+                
+                elif len(re.findall(r'\d+', duration_str)) == 0 or duration_str == '0':
+                    length_step = np.nan
+                
+                else:
+                    step_times = [float(nr) for nr in re.findall(r'\d+\.\d+|\d+', duration_str)]
+                    if len(step_times) >2:
+                        if ('(' in duration_str):
+                            try:
+                                length_step = float(extract_number_in_parentheses(duration_str))
+                            except TypeError:
+                                length_step = np.nan
                                 
-                                if ("geneEnrichment" in json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]):
+                    elif len(step_times) == 1:
+                        length_step = float(step_times[0])
+                    else:
+                        length_step = np.mean([float(time) for time in step_times])
+                    label = duration_str
             
-                                    if json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["geneEnrichment"] == 'upregulated':
-                                        markers += ' ↑'
-                                    elif json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["geneEnrichment"] == 'downregulated':
-                                        markers += ' ↓'
-                                    elif json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["geneEnrichment"] is None:
-                                        markers += ' (direction not specified)'
-                                elif  json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["name"]:
-                                    markers += ' (direction not specified)'
-                                    
-                                if j != iterate_mark[-1]:
-                                    markers += ', '
-                                
-                        if markers == '':
-                            markers = 'Not specified'
+                if np.isnan(length_step):
+                    length_step = 35  # Default length if unspecified
+                    label = 'Not specified'
                         
-                        step_content += f"""<div class="readout-container"<p><strong>Readout:</strong></p><p>{markers}</p></div>"""
-
-
-                # Render the HTML content inside the container
-                st.markdown(step_content, unsafe_allow_html=True)
+                elif 'hours' not in label.lower():
+                    label = label + '\nhours'
+                else:
+                    label = label.replace(' hours', '\nhours')
+            
+                if length_step <35:
+                    length_step = 35
+            
+                labels_time.append(label)
+                lengths.append(length_step)
+            
+            # Normalize lengths to calculate proportions for column widths
+            total_length = sum(lengths)
+            proportions = [length / total_length for length in lengths]
+            
+            # Adjust proportions if any value is less than 0.1
+            for i, prop in enumerate(proportions):
+                if prop < 0.1:
+                    # Find the index of the maximum element in proportions
+                    max_index = proportions.index(max(proportions))
+                    
+                    # Add 0.1 to the current element
+                    proportions[i] += 0.05
+                    
+                    # Subtract 0.1 from the maximum element
+                    proportions[max_index] -= 0.05
+            
+                    # Ensure that the maximum element doesn't drop below 0.1 after adjustment
+                    if proportions[max_index] < 0.1:
+                        proportions[max_index] = 0.1
+            
+            # Display the steps with proportional widths
+            columns = st.columns(proportions)
+            
+            # Render each step inside the appropriate column
+            for i in range(len(no_steps)):
+                if no_steps[i] == '0':
+                    container_class = "step-container-culturing"
+                    label = 'Culturing'
+                else:
+                    container_class = "step-container"
+                    label = f"Step {no_steps[i]}"
+            
+                with columns[i]:
+                    # Display the step label above the container with small font size
+                    st.markdown(f"<p class='small-text' style='text-align: center; font-weight: bold;'>{label}</p>", unsafe_allow_html=True)
+            
+                    # Display the duration (labels_time) underneath the step label
+                    st.markdown(f"<p class='small-text' style='text-align: center;'>{labels_time[i]}</p>", unsafe_allow_html=True)
+            
+                    # Build HTML content for the step container
+                    step_content = f"""
+                    <div class="{container_class}">
+                    """
+                    # Basal media
+                    if (mediacheckbox):
+                        media = ''
+                        try:
+                            iterate = list(json.loads(protocol_info[no_steps[i]])["basalMedia"].keys())
+                        except AttributeError:
+                            iterate =  range(len(json.loads(protocol_info[no_steps[i]])["basalMedia"]))
+                        for j in iterate:
+                            if json.loads(protocol_info[no_steps[i]])["basalMedia"][j]["name"]:
+                                if json.loads(protocol_info[no_steps[i]])["basalMedia"][j]["name"] not in ['-', 'NA']:
+                                    media += json.loads(protocol_info[no_steps[i]])["basalMedia"][j]["name"]
+                                    if j != iterate[-1]:
+                                        media += ', '
+                        if media == '':
+                            media = 'Not specified'
+                        step_content += f"""<p><strong>Basal media:</strong></p><p>{media}</p><hr>"""
+            
+                   # Supplements
+                    if (supplementscheckbox):
+                        supplements = ''
+                        try:
+                            iterate_supplements = list(json.loads(protocol_info[no_steps[i]])["SerumAndSupplements"].keys())
+                        except AttributeError:
+                            iterate_supplements = range(len(json.loads(protocol_info[no_steps[i]])["SerumAndSupplements"]))
+                        for j in iterate_supplements:
+                            if json.loads(protocol_info[no_steps[i]])["SerumAndSupplements"][j]["name"] not in ['-', 'NA']:
+                                supplements += json.loads(protocol_info[no_steps[i]])["SerumAndSupplements"][j]["name"] 
+                                if j != iterate_supplements[-1]:
+                                    supplements += ', '
+                        
+                        if supplements == '':
+                            supplements = 'Not specified'
                 
-        st.markdown(f"""<hr class="custom-divider">""", unsafe_allow_html=True)
+                        step_content += f"<p><strong>Serum and supplements:</strong></p><p>{supplements}</p><hr>"
+            
+                    # Growth factors
+                    if (gfcheckbox):
+                        gf = ''
+                        try:
+                            iterate_gf = list(json.loads(protocol_info[no_steps[i]])["growthFactor"].keys())
+                        except AttributeError:
+                            iterate_gf = range(len(json.loads(protocol_info[no_steps[i]])["growthFactor"]))
+                        for j in iterate_gf:
+                            if json.loads(protocol_info[no_steps[i]])["growthFactor"][j]["name"] not in ['-', 'NA']:
+                                gf += json.loads(protocol_info[no_steps[i]])["growthFactor"][j]["name"]
+                                if j != iterate_gf[-1]:
+                                    gf += ', '
+                
+                        if gf == '':
+                            gf = 'Not specified'
+                
+                        step_content += f"<p><strong>Growth factors:</strong></p><p>{gf}</p><hr>"
+
+
+                    #Culture matrix
+                    if (matrixcheckbox):
+                        matrix = ''
+                        if ("cultureMatrix") in json.loads(protocol_info[no_steps[i]]).keys():
+                            try:
+                                iterate_mat = list(json.loads(protocol_info[no_steps[i]])["cultureMatrix"].keys())
+                            except AttributeError:
+                                iterate_mat = range(len(json.loads(protocol_info[no_steps[i]])["cultureMatrix"]))
+                            for j in iterate_mat:
+                                if json.loads(protocol_info[no_steps[i]])["cultureMatrix"][j]["name"] not in ['-', 'NA', 'Not given']:
+                                    matrix += json.loads(protocol_info[no_steps[i]])["cultureMatrix"][j]["name"]
+                                    if j != iterate_mat[-1]:
+                                        matrix += ', '
+                
+                        if matrix == '':
+                            matrix = 'Not specified'
+                
+                        step_content += f"<p><strong>Culture matrix:</strong></p><p>{matrix}</p><hr>"
+                        
+                    step_content+= "</div>"
+
+                    #Markers
+                    if (markerscheckbox):
+                        markers = ''
+                        if no_steps[i] != '0':
+                            try:
+                                iterate_mark = list(json.loads(protocol_info[no_steps[i]])["geneMarkers"].keys())
+                            except AttributeError:
+                                iterate_mark = range(len(json.loads(protocol_info[no_steps[i]])["geneMarkers"]))
+                            for j in iterate_mark:
+                                if json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["name"] not in ['-', 'NA', 'Not given', None]:
+                                    markers += json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["name"]
+                                    
+                                    if ("geneEnrichment" in json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]):
+                
+                                        if json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["geneEnrichment"] == 'upregulated':
+                                            markers += ' ↑'
+                                        elif json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["geneEnrichment"] == 'downregulated':
+                                            markers += ' ↓'
+                                        elif json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["geneEnrichment"] is None:
+                                            markers += ' (direction not specified)'
+                                    elif  json.loads(protocol_info[no_steps[i]])["geneMarkers"][j]["name"]:
+                                        markers += ' (direction not specified)'
+                                        
+                                    if j != iterate_mark[-1]:
+                                        markers += ', '
+                                    
+                            if markers == '':
+                                markers = 'Not specified'
+                            
+                            step_content += f"""<div class="readout-container"<p><strong>Readout:</strong></p><p>{markers}</p></div>"""
+
+
+                    # Render the HTML content inside the container
+                    st.markdown(step_content, unsafe_allow_html=True)
+                    
+            st.markdown(f"""<hr class="custom-divider">""", unsafe_allow_html=True)
+        except Exception as e:
+            st.warning(f"Skipping PMID {pmid} | Participant ID {participant_id} due to error: {e}")
+            continue
     
     
 plot_data_for_pmid(selected_pmid, selected_participants)
